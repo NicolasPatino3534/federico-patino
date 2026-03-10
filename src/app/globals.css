@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --navy: #0d1f3c;
+    --navy-light: #162d54;
+    --navy-mid: #1e3a6e;
+    --gold: #c9a84c;
+    --gold-light: #e8c97a;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply text-slate-800;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-playfair), serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center gap-2 bg-[#c9a84c] text-[#0d1f3c] font-bold text-sm
+           px-6 py-3 rounded-lg transition-all hover:bg-[#e8c97a] hover:-translate-y-0.5
+           active:translate-y-0 cursor-pointer border-0;
+  }
+
+  .btn-outline {
+    @apply inline-flex items-center gap-2 border-2 border-[#0d1f3c] text-[#0d1f3c]
+           font-semibold text-sm px-6 py-3 rounded-lg transition-all
+           hover:bg-[#0d1f3c] hover:text-white cursor-pointer bg-transparent;
+  }
+
+  .btn-navy {
+    @apply inline-flex items-center gap-2 bg-[#0d1f3c] text-white
+           font-semibold text-sm px-6 py-3 rounded-lg transition-all
+           hover:bg-[#1e3a6e] cursor-pointer border-0;
+  }
+
+  .section-label {
+    @apply inline-flex items-center gap-2 text-[#c9a84c] text-xs font-semibold
+           tracking-[2px] uppercase mb-4;
+  }
+
+  .section-label::before {
+    content: '';
+    @apply block w-6 h-0.5 bg-[#c9a84c];
+  }
+
+  .section-title {
+    @apply text-3xl md:text-4xl text-[#0d1f3c] leading-tight mb-4;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 border-2 border-slate-200 rounded-lg text-sm
+           text-slate-800 bg-slate-50 outline-none transition-colors
+           focus:border-[#0d1f3c] focus:bg-white;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:-translate-y-1.5
+           hover:shadow-[0_16px_48px_rgba(13,31,60,0.14)];
+  }
+}
+
+/* Swiper customization */
+.swiper-pagination-bullet-active {
+  background: #c9a84c !important;
+}
+
+.swiper-button-next,
+.swiper-button-prev {
+  color: #c9a84c !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #0d1f3c; border-radius: 3px; }
