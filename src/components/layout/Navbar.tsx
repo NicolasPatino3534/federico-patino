@@ -54,16 +54,6 @@ export default function Navbar() {
         ))}
       </ul>
 
-      {/* CTA */}
-      <div className="hidden md:flex items-center gap-3">
-        <Link
-          href="/login"
-          className="text-white/80 text-[13px] px-4 py-1.5 rounded border border-white/20 hover:border-[#c9a84c] hover:text-[#e8c97a] transition-all no-underline"
-        >
-          Ingresar
-        </Link>
-      </div>
-
       {/* Mobile hamburger */}
       <button
         className="md:hidden text-white p-1"
@@ -91,11 +81,6 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
-          <div className="flex gap-3 pt-2 border-t border-white/10">
-            <Link href="/login" className="flex-1 text-center text-white/80 text-sm py-2 rounded border border-white/20 no-underline">
-              Ingresar
-            </Link>
-          </div>
         </div>
       )}
     </nav>

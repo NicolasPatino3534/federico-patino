@@ -1,66 +1,187 @@
 // src/app/(public)/propiedades/[slug]/page.tsx
+import { cache } from 'react'
 import { notFound } from 'next/navigation'
-import { Metadata } from 'next'
+import type { Metadata } from 'next'
 import { prisma } from '@/lib/db'
 import Navbar from '@/components/layout/Navbar'
 import Footer from '@/components/layout/Footer'
 import WhatsAppButton from '@/components/ui/WhatsAppButton'
 import InquiryForm from '@/components/property/InquiryForm'
+import PropertyImage from '@/components/property/PropertyImage'
 import { formatPrice, OPERATION_LABELS, TYPE_LABELS, STATUS_LABELS, STATUS_COLORS } from '@/types'
 import { MapPin, BedDouble, Bath, Car, Maximize2, Building, CheckCircle2 } from 'lucide-react'
-import Image from 'next/image'
 
-// Revalidar las páginas de propiedades cada hora
+// ISR: revalidar el HTML cacheado cada hora. Si la prop se actualiza en el sync,
+// el siguiente visitante tras 3600 s verá la versión fresca.
 export const revalidate = 3600
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
-  const property = await prisma.property.findUnique({
-    where: { slug: params.slug },
-    include: { images: { where: { isMain: true }, take: 1 } },
-  })
-  if (!property) return {}
+const SITE_URL  = process.env.NEXT_PUBLIC_SITE_URL  || 'https://federicopatino.com.ar'
+const SITE_NAME = process.env.NEXT_PUBLIC_SITE_NAME || 'Federico Patiño Propiedades'
 
-  const ogImage = property.images[0]?.url || ''
-  return {
-    title: property.title,
-    description: property.description?.substring(0, 160) || `${property.propertyType} en ${property.city}`,
-    openGraph: {
-      title: property.title,
-      ...(ogImage ? { images: [{ url: ogImage }] } : {}),
-    },
-  }
-}
-
-export default async function PropertyPage({ params }: { params: { slug: string } }) {
-  const property = await prisma.property.findUnique({
-    where: { slug: params.slug },
+// ─── Query cacheada por request ───────────────────────────────────────────────
+// React.cache() deduplica llamadas con el mismo slug dentro de un mismo request:
+// generateMetadata y el Page Component comparten el resultado → una sola query.
+const getPropertyBySlug = cache(async (slug: string) => {
+  return prisma.property.findUnique({
+    where:   { slug },
     include: {
-      images: { orderBy: { orderIndex: 'asc' } },
+      images:   { orderBy: { orderIndex: 'asc' } },
       features: { orderBy: { category: 'asc' } },
     },
   })
+})
+
+// ─── generateStaticParams ────────────────────────────────────────────────────
+// Pre-renderiza en build time las propiedades publicadas más recientes.
+// Las demás se renderizan on-demand y se cachean (fallback: 'blocking').
+export async function generateStaticParams() {
+  const props = await prisma.property.findMany({
+    where:   { isPublished: true, status: { not: 'INACTIVE' } },
+    select:  { slug: true },
+    orderBy: { updatedAt: 'desc' },
+    take:    50,
+  })
+  return props.map(p => ({ slug: p.slug }))
+}
+
+// ─── generateMetadata ────────────────────────────────────────────────────────
+// Se ejecuta en el servidor en cada request (no-cached) para el <head>.
+// Cuando alguien comparte la URL en WhatsApp/Twitter/LinkedIn, este metadata
+// es lo que el scraper de la red social lee para generar la preview.
+export async function generateMetadata(
+  { params }: { params: { slug: string } }
+): Promise<Metadata> {
+  const property = await getPropertyBySlug(params.slug)
+
+  if (!property) return { title: 'Propiedad no encontrada' }
+
+  // ── Descripción enriquecida para el snippet de Google y el preview de WhatsApp
+  const priceStr    = formatPrice(property.price, property.priceCurrency, property.pricePeriod)
+  const typeStr     = TYPE_LABELS[property.propertyType] || property.propertyType
+  const opStr       = OPERATION_LABELS[property.operation] || property.operation
+  const locationStr = [property.neighborhood, property.city, property.province]
+    .filter(Boolean).join(', ')
+
+  const baseDescription = property.description?.substring(0, 120)?.replace(/\n/g, ' ')
+  const richDescription  = [
+    `${typeStr} en ${opStr}`,
+    priceStr !== 'Consultar precio' ? priceStr : null,
+    locationStr || null,
+    baseDescription || null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+    .substring(0, 160)
+
+  // ── Imagen OG: usar urlBig (la de máxima resolución), NO el thumbnail
+  //    WhatsApp renderiza la imagen en ~300x158 px — necesitamos al menos 600 x 315 px.
+  const ogImageUrl = property.images[0]?.urlBig
+    || property.images[0]?.url
+    || `${SITE_URL}/og-default.jpg`   // imagen de fallback en /public
+
+  const canonicalUrl = `${SITE_URL}/propiedades/${property.slug}`
+
+  return {
+    // ── Título: incluye precio y tipo para CTR en Google
+    title:       `${property.title} · ${priceStr}`,
+    description: richDescription,
+
+    // ── URL canónica — evita contenido duplicado si el slug cambia
+    alternates: { canonical: canonicalUrl },
+
+    // ── OpenGraph — parseado por WhatsApp, Facebook, LinkedIn, Slack, Telegram
+    openGraph: {
+      type:        'website',
+      url:         canonicalUrl,
+      siteName:    SITE_NAME,
+      locale:      'es_AR',
+      title:       property.title,
+      description: richDescription,
+      images: [
+        {
+          url:    ogImageUrl,
+          width:  1200,     // WhatsApp/Meta requieren al menos 600x315 para large preview
+          height: 630,
+          alt:    property.title,
+        },
+      ],
+    },
+
+    // ── Twitter Card — preview en X (Twitter), Notion, Discord, etc.
+    twitter: {
+      card:        'summary_large_image',
+      title:       property.title,
+      description: richDescription,
+      images:      [ogImageUrl],
+    },
+
+    // ── Robots: propiedades INACTIVE no deben indexarse
+    robots: property.isPublished && property.status !== 'INACTIVE'
+      ? { index: true, follow: true }
+      : { index: false, follow: false },
+  }
+}
+
+// ─── Page Component ───────────────────────────────────────────────────────────
+
+export default async function PropertyPage({ params }: { params: { slug: string } }) {
+  const property = await getPropertyBySlug(params.slug)
 
   if (!property || !property.isPublished) notFound()
 
-  // Count view (non-blocking)
+  // Incrementar contador de vistas de forma no-bloqueante
   prisma.property.update({
     where: { id: property.id },
-    data: { viewsCount: { increment: 1 } },
+    data:  { viewsCount: { increment: 1 } },
   }).catch(() => {})
 
-  const wa = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '543515956397'
-  const waMsg = encodeURIComponent(`Hola Federico, me interesa la propiedad "${property.title}". ¿Podés darme más información?`)
+  // ── JSON-LD Structured Data para Google Rich Results ─────────────────────
+  // Propiedad tipo "RealEstateListing" según schema.org — mejora CTR en SERP.
+  const priceStr  = formatPrice(property.price, property.priceCurrency, property.pricePeriod)
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type':    'RealEstateListing',
+    name:        property.title,
+    description: property.description?.substring(0, 500) || priceStr,
+    url:         `${SITE_URL}/propiedades/${property.slug}`,
+    image:       property.images.slice(0, 5).map(img => img.urlBig || img.url),
+    offers: property.price
+      ? {
+          '@type':         'Offer',
+          price:            property.price,
+          priceCurrency:    property.priceCurrency,
+          availability:     'https://schema.org/InStock',
+        }
+      : undefined,
+    address: {
+      '@type':           'PostalAddress',
+      streetAddress:      property.address || undefined,
+      addressLocality:    property.city || undefined,
+      addressRegion:      property.province || undefined,
+      addressCountry:     'AR',
+    },
+    ...(property.lat && property.lng
+      ? { geo: { '@type': 'GeoCoordinates', latitude: property.lat, longitude: property.lng } }
+      : {}),
+    numberOfRooms:    property.bedrooms   ?? undefined,
+    numberOfBathroomsTotal: property.bathrooms ?? undefined,
+    floorSize: property.areaTotal
+      ? { '@type': 'QuantitativeValue', value: property.areaTotal, unitCode: 'MTK' }
+      : undefined,
+  }
+
+  const wa    = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '543515956397'
+  const waMsg = encodeURIComponent(`Hola Federico, me interesa "${property.title}". ¿Podés darme más info?`)
 
   const stats = [
-    { icon: BedDouble, label: 'Dormitorios', value: property.bedrooms },
-    { icon: Bath, label: 'Baños', value: property.bathrooms },
-    { icon: Car, label: 'Cocheras', value: property.garages },
-    { icon: Maximize2, label: 'Sup. total', value: property.areaTotal ? `${property.areaTotal} m²` : null },
-    { icon: Maximize2, label: 'Sup. cubierta', value: property.areaCovered ? `${property.areaCovered} m²` : null },
-    { icon: Building, label: 'Piso', value: property.floor },
+    { icon: BedDouble, label: 'Dormitorios',   value: property.bedrooms },
+    { icon: Bath,      label: 'Baños',          value: property.bathrooms },
+    { icon: Car,       label: 'Cocheras',        value: property.garages },
+    { icon: Maximize2, label: 'Sup. total',      value: property.areaTotal  ? `${property.areaTotal} m²`  : null },
+    { icon: Maximize2, label: 'Sup. cubierta',   value: property.areaCovered ? `${property.areaCovered} m²` : null },
+    { icon: Building,  label: 'Piso',            value: property.floor },
   ].filter(s => s.value != null && s.value !== 0)
 
-  // Agrupar características por categoría
   const featuresByCategory = property.features.reduce((acc, f) => {
     const cat = f.category || 'General'
     if (!acc[cat]) acc[cat] = []
@@ -70,6 +191,12 @@ export default async function PropertyPage({ params }: { params: { slug: string 
 
   return (
     <>
+      {/* Inyectar el JSON-LD en el <head> */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
       <Navbar />
 
       <div className="pt-20 min-h-screen bg-[#f8f7f4]">
@@ -89,26 +216,31 @@ export default async function PropertyPage({ params }: { params: { slug: string 
             {/* LEFT: Galería + Detalles */}
             <div className="lg:col-span-2 space-y-7">
 
-              {/* Galería de imágenes */}
+              {/* Galería */}
               <div className="bg-white rounded-xl overflow-hidden shadow-sm">
                 {property.images.length > 0 ? (
                   <div className="space-y-2 p-3">
                     <div className="relative h-96 rounded-lg overflow-hidden">
-                      <Image
+                      <PropertyImage
                         src={property.images[0].urlBig || property.images[0].url}
+                        fallbackSrc={property.images[0].url}
                         alt={property.images[0].altText || property.title}
-                        fill className="object-cover"
+                        fill
+                        className="object-cover"
                         priority
+                        sizes="(max-width: 1024px) 100vw, 66vw"
                       />
                     </div>
                     {property.images.length > 1 && (
                       <div className="grid grid-cols-4 gap-2">
                         {property.images.slice(1, 5).map((img, i) => (
                           <div key={img.id} className="relative h-20 rounded-lg overflow-hidden">
-                            <Image
+                            <PropertyImage
                               src={img.url}
                               alt={img.altText || `Foto ${i + 2}`}
-                              fill className="object-cover hover:opacity-90 transition-opacity cursor-pointer"
+                              fill
+                              className="object-cover hover:opacity-90 transition-opacity cursor-pointer"
+                              sizes="25vw"
                             />
                             {i === 3 && property.images.length > 5 && (
                               <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white text-sm font-bold">
@@ -152,7 +284,6 @@ export default async function PropertyPage({ params }: { params: { slug: string 
                   </div>
                 )}
 
-                {/* Stats */}
                 {stats.length > 0 && (
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 py-5 border-y border-slate-100 mb-6">
                     {stats.map(({ icon: Icon, label, value }) => (
@@ -165,7 +296,6 @@ export default async function PropertyPage({ params }: { params: { slug: string 
                   </div>
                 )}
 
-                {/* Descripción */}
                 {property.description && (
                   <div>
                     <h2 className="font-serif text-lg text-[#0d1f3c] mb-3">Descripción</h2>
@@ -209,7 +339,9 @@ export default async function PropertyPage({ params }: { params: { slug: string 
                   </div>
                   <iframe
                     src={`https://maps.google.com/maps?q=${property.lat},${property.lng}&z=15&output=embed`}
-                    width="100%" height="320" loading="lazy"
+                    width="100%"
+                    height="320"
+                    loading="lazy"
                     referrerPolicy="no-referrer-when-downgrade"
                     className="border-0"
                   />
@@ -227,7 +359,6 @@ export default async function PropertyPage({ params }: { params: { slug: string 
                   <div className="text-slate-400 text-xs mb-5">Precio por {property.pricePeriod}</div>
                 )}
 
-                {/* WhatsApp CTA */}
                 <a
                   href={`https://wa.me/${wa}?text=${waMsg}`}
                   target="_blank"
@@ -240,7 +371,6 @@ export default async function PropertyPage({ params }: { params: { slug: string 
                   Consultar por WhatsApp
                 </a>
 
-                {/* Formulario de consulta (client component) */}
                 <InquiryForm propertyId={property.id} propertyTitle={property.title} />
               </div>
             </div>

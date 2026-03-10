@@ -1,37 +1,80 @@
 // src/app/(public)/page.tsx
+//
+// PILAR 5 — Suspense + Streaming
+//
+// PROBLEMA ANTERIOR:
+//   const [featured, stats] = await Promise.all([...])
+//   Esto hacía que TODO el HTML esperara a que AMBAS queries de Prisma
+//   terminaran antes de enviar el primer byte al browser.
+//   El Hero (que es estático) no se veía hasta que Prisma respondía.
+//
+// SOLUCIÓN:
+//   1. El page component NO hace ningún await → el Hero se envía inmediatamente.
+//   2. Cada sección con datos vive en su propio async Server Component.
+//   3. <Suspense> muestra el skeleton mientras el server resuelve cada sección.
+//   4. Next.js usa HTTP streaming para inyectar el HTML real cuando está listo.
+//
+//   Resultado: el Hero + Navbar cargan al instante (TTFB mínimo),
+//   los count y las cards aparecen progresivamente sin spinner de página entera.
+
+import { Suspense } from 'react'
 import { prisma } from '@/lib/db'
 import Navbar from '@/components/layout/Navbar'
 import Footer from '@/components/layout/Footer'
-import PropertyCard from '@/components/property/PropertyCard'
 import SearchBox from '@/components/property/SearchBox'
 import ContactForm from '@/components/property/ContactForm'
 import WhatsAppButton from '@/components/ui/WhatsAppButton'
-import type { Property } from '@/types'
+import FeaturedProperties from '@/components/sections/FeaturedProperties'
+import { PropertyGridSkeleton } from '@/components/property/PropertyCardSkeleton'
 import {
   Building2, FileCheck, DollarSign, Users,
   MapPin, Phone, Mail, Clock
 } from 'lucide-react'
 
-async function getFeaturedProperties(): Promise<Property[]> {
-  const properties = await prisma.property.findMany({
-    where: { isPublished: true, isFeatured: true, status: { not: 'INACTIVE' } },
-    include: { images: { where: { isMain: true }, take: 1 }, features: { take: 5 } },
-    orderBy: { createdAt: 'desc' },
-    take: 6,
+// ─── Stats Bar — Server Component async aislado ───────────────────────────────
+// Si esta query tarda, sólo esta sección muestra el skeleton; el Hero ya cargó.
+async function StatsBar() {
+  const available = await prisma.property.count({
+    where: { isPublished: true, status: 'AVAILABLE' },
   })
-  return properties as unknown as Property[]
+
+  const items = [
+    { num: '+350',        label: 'Propiedades vendidas' },
+    { num: '15',          label: 'Años de experiencia' },
+    { num: `+${available}`, label: 'Propiedades activas' },
+    { num: '98%',         label: 'Clientes satisfechos' },
+  ]
+
+  return (
+    <div className="max-w-5xl mx-auto px-[5%] grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+      {items.map(s => (
+        <div key={s.label}>
+          <div className="font-serif text-4xl font-bold text-[#c9a84c]">{s.num}</div>
+          <div className="text-white/45 text-[11px] tracking-wider uppercase mt-1">{s.label}</div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
-async function getStats() {
-  const [total, available] = await Promise.all([
-    prisma.property.count({ where: { crmSource: 'wasi' } }),
-    prisma.property.count({ where: { isPublished: true, status: 'AVAILABLE' } }),
-  ])
-  return { total, available }
+// Skeleton para StatsBar mientras carga el count
+function StatsBarSkeleton() {
+  return (
+    <div className="max-w-5xl mx-auto px-[5%] grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="flex flex-col items-center gap-2">
+          <div className="h-9 w-20 bg-white/10 rounded animate-pulse" />
+          <div className="h-3 w-28 bg-white/10 rounded animate-pulse" />
+        </div>
+      ))}
+    </div>
+  )
 }
 
-export default async function HomePage() {
-  const [featured, stats] = await Promise.all([getFeaturedProperties(), getStats()])
+// ─── Page Component — NO async, NO awaits ─────────────────────────────────────
+// Al no hacer ningún await, Next.js puede enviar el Hero al browser inmediatamente
+// y resolver las secciones de datos en streaming mientras el usuario ya ve el Hero.
+export default function HomePage() {
   const wa = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '543515956397'
 
   return (
@@ -39,11 +82,15 @@ export default async function HomePage() {
       <Navbar />
 
       {/* ── HERO ─────────────────────────────────────────────────────── */}
+      {/* 100% estático — se envía al browser sin esperar ninguna query */}
       <section className="relative min-h-screen bg-[#0d1f3c] flex flex-col overflow-hidden">
-        {/* Background decorations */}
         <div className="absolute inset-0 bg-gradient-to-br from-[#0d1f3c] via-[#162d54] to-[#0d1f3c]" />
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px)', backgroundSize: '60px 60px' }}
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: 'linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px)',
+            backgroundSize: '60px 60px',
+          }}
         />
         <div className="absolute right-0 top-0 w-[50%] h-full opacity-10 bg-gradient-radial from-[#c9a84c] to-transparent" />
 
@@ -66,7 +113,6 @@ export default async function HomePage() {
           <SearchBox />
         </div>
 
-        {/* Scroll indicator */}
         <div className="relative z-10 flex flex-col items-center gap-2 pb-8 text-white/30 text-[10px] tracking-[2px] uppercase">
           <div className="w-6 h-9 rounded-xl border border-white/20 relative">
             <div className="w-0.5 h-1.5 bg-white/40 rounded absolute top-1.5 left-1/2 -translate-x-1/2 animate-bounce" />
@@ -76,44 +122,32 @@ export default async function HomePage() {
       </section>
 
       {/* ── STATS ────────────────────────────────────────────────────── */}
+      {/* Suspense propio: si el count tarda, muestra skeletons sólo aquí */}
       <div className="bg-[#0d1f3c] border-t border-[#c9a84c]/15 py-7">
-        <div className="max-w-5xl mx-auto px-[5%] grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-          {[
-            { num: '+350', label: 'Propiedades vendidas' },
-            { num: '15', label: 'Años de experiencia' },
-            { num: `+${stats.available}`, label: 'Propiedades activas' },
-            { num: '98%', label: 'Clientes satisfechos' },
-          ].map(s => (
-            <div key={s.label}>
-              <div className="font-serif text-4xl font-bold text-[#c9a84c]">{s.num}</div>
-              <div className="text-white/45 text-[11px] tracking-wider uppercase mt-1">{s.label}</div>
-            </div>
-          ))}
-        </div>
+        <Suspense fallback={<StatsBarSkeleton />}>
+          {/* @ts-expect-error — Server Component async inside Suspense */}
+          <StatsBar />
+        </Suspense>
       </div>
 
       {/* ── PROPIEDADES DESTACADAS ───────────────────────────────────── */}
+      {/* Suspense propio: muestra el grid de skeletons mientras Prisma resuelve */}
       <section className="bg-[#f8f7f4] py-24 px-[5%]">
         <div className="max-w-6xl mx-auto">
           <div className="flex justify-between items-end mb-12 flex-wrap gap-4">
             <div>
               <div className="section-label">Propiedades Destacadas</div>
-              <h2 className="section-title">Las mejores oportunidades<br />del mercado cordobés</h2>
+              <h2 className="section-title">
+                Las mejores oportunidades<br />del mercado cordobés
+              </h2>
             </div>
             <a href="/propiedades" className="btn-outline">Ver todas →</a>
           </div>
 
-          {featured.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
-              {featured.map(p => <PropertyCard key={p.id} property={p} />)}
-            </div>
-          ) : (
-            <div className="text-center py-20 text-slate-400">
-              <Building2 size={48} className="mx-auto mb-4 opacity-30" />
-              <p>Las propiedades se cargarán tras la primera sincronización con WASI.</p>
-              <p className="text-sm mt-1">Ejecutá: <code className="bg-slate-100 px-2 py-0.5 rounded">npm run sync:wasi</code></p>
-            </div>
-          )}
+          <Suspense fallback={<PropertyGridSkeleton count={6} />}>
+            {/* @ts-expect-error — Server Component async inside Suspense */}
+            <FeaturedProperties />
+          </Suspense>
         </div>
       </section>
 
@@ -129,9 +163,9 @@ export default async function HomePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-7">
             {[
               { icon: Building2, num: '01', title: 'Búsqueda personalizada', desc: 'Analizamos tus necesidades y buscamos activamente la propiedad ideal para vos.' },
-              { icon: FileCheck, num: '02', title: 'Gestión documental', desc: 'Nos encargamos de toda la documentación legal: contratos, certificados y trámites.' },
-              { icon: DollarSign, num: '03', title: 'Tasación gratuita', desc: 'Valoramos tu propiedad con criterios de mercado actualizados para vender al precio justo.' },
-              { icon: Users, num: '04', title: 'Asesoramiento post-venta', desc: 'Nuestra relación no termina con la firma. Asesoramos en todos los pasos posteriores.' },
+              { icon: FileCheck, num: '02', title: 'Gestión documental',     desc: 'Nos encargamos de toda la documentación legal: contratos, certificados y trámites.' },
+              { icon: DollarSign, num: '03', title: 'Tasación gratuita',    desc: 'Valoramos tu propiedad con criterios de mercado actualizados para vender al precio justo.' },
+              { icon: Users,     num: '04', title: 'Asesoramiento post-venta', desc: 'Nuestra relación no termina con la firma. Asesoramos en todos los pasos posteriores.' },
             ].map(({ icon: Icon, num, title, desc }) => (
               <div key={title} className="p-8 rounded-xl border-2 border-slate-100 relative overflow-hidden hover:border-[#0d1f3c] hover:shadow-lg transition-all group">
                 <div className="absolute top-5 right-5 font-serif text-5xl font-bold text-slate-100 leading-none group-hover:text-[#0d1f3c]/10 transition-colors">
@@ -212,10 +246,10 @@ export default async function HomePage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 mt-12">
             <div>
               {[
-                { icon: Phone, label: 'Teléfono / WhatsApp', value: '+54 351 5956397', href: `tel:+${wa}` },
-                { icon: Mail, label: 'Correo electrónico', value: 'info@federicopatino.com.ar', href: 'mailto:info@federicopatino.com.ar' },
-                { icon: MapPin, label: 'Ubicación', value: 'Córdoba Capital, Argentina', href: null },
-                { icon: Clock, label: 'Horario', value: 'Lun–Vie 9–18 hs · Sáb 10–14 hs', href: null },
+                { icon: Phone,  label: 'Teléfono / WhatsApp', value: '+54 351 5956397',           href: `tel:+${wa}` },
+                { icon: Mail,   label: 'Correo electrónico',   value: 'info@federicopatino.com.ar', href: 'mailto:info@federicopatino.com.ar' },
+                { icon: MapPin, label: 'Ubicación',            value: 'Córdoba Capital, Argentina', href: null },
+                { icon: Clock,  label: 'Horario',              value: 'Lun–Vie 9–18 hs · Sáb 10–14 hs', href: null },
               ].map(({ icon: Icon, label, value, href }) => (
                 <div key={label} className="flex items-start gap-4 mb-7">
                   <div className="w-11 h-11 bg-[#0d1f3c] rounded-lg flex items-center justify-center shrink-0">

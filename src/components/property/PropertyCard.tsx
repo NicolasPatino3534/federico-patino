@@ -1,8 +1,8 @@
 // src/components/property/PropertyCard.tsx
 import Link from 'next/link'
-import Image from 'next/image'
 import { MapPin, BedDouble, Bath, Car, Maximize2 } from 'lucide-react'
 import { Property, formatPrice, OPERATION_LABELS, STATUS_LABELS, STATUS_COLORS } from '@/types'
+import PropertyImage from './PropertyImage'
 
 interface Props {
   property: Property
@@ -22,21 +22,17 @@ export default function PropertyCard({ property, showStatus = false }: Props) {
   return (
     <Link href={`/propiedades/${property.slug}`} className="no-underline group block">
       <article className="bg-white rounded-xl overflow-hidden shadow-[0_2px_16px_rgba(13,31,60,0.07)] card-hover">
-        {/* Imagen */}
+        {/* Imagen con fallback automático si WASI rompe la URL en runtime */}
         <div className="relative h-56 bg-slate-100 overflow-hidden">
-          {mainImage ? (
-            <Image
-              src={mainImage.urlBig || mainImage.url}
-              alt={mainImage.altText || property.title}
-              fill
-              className="object-cover transition-transform duration-500 group-hover:scale-105"
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-slate-200">
-              <span className="text-slate-400 text-sm">Sin imagen</span>
-            </div>
-          )}
+          <PropertyImage
+            src={mainImage?.urlBig || mainImage?.url || ''}
+            // Si urlBig falla, reintentar con la thumbnail como respaldo
+            fallbackSrc={mainImage?.url !== mainImage?.urlBig ? mainImage?.url : undefined}
+            alt={mainImage?.altText || property.title}
+            fill
+            className="object-cover transition-transform duration-500 group-hover:scale-105"
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          />
 
           {/* Badges */}
           <div className="absolute top-3 left-3 flex gap-1.5">

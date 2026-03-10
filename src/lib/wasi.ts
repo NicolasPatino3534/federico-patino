@@ -74,7 +74,9 @@ export interface WasiFeature {
 
 export async function wasiGetProperties(offset = 0, quantity = 20): Promise<WasiProperty[]> {
   try {
-    const url = `${WASI_BASE}/property/search?${creds()}&id_country=5&offset=${offset}&quantity=${quantity}`
+    // Sin filtro id_country: WASI ya limita los resultados a las propiedades de la cuenta.
+    // El filtro id_country=5 podría excluir propiedades si alguna tiene otro país asignado en el CRM.
+    const url = `${WASI_BASE}/property/search?${creds()}&offset=${offset}&quantity=${quantity}`
     const res = await fetch(url, { next: { revalidate: 0 } })
     const text = await res.text()
     if (!text || text.trim().startsWith('<')) return []

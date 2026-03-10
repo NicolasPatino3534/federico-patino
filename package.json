@@ -11,7 +11,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "sync:wasi": "tsx jobs/syncWasi.ts"
+    "sync:wasi": "node --env-file=.env.local --import=tsx/esm jobs/syncWasi.ts"
   },
   "dependencies": {
     "next": "14.2.5",
